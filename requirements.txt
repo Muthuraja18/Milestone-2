@@ -1,0 +1,10 @@
+streamlit==1.7.0
+speechrecognition==3.8.1
+gtts==2.2.3
+soundfile==0.10.3.post1
+sounddevice==0.4.2
+gspread==5.1.1
+google-auth==2.3.3
+textblob==0.15.3
+transformers==4.15.0
+torch
