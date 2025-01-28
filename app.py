@@ -1,36 +1,33 @@
-import streamlit as st
-import PyPDF2
-import speech_recognition as sr
-from transformers import GPT2LMHeadModel, GPT2Tokenizer, pipeline
+import os
+import pyaudio
+import pandas as pd
 from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
+import time
+import speech_recognition as sr
+from textblob import TextBlob
+import streamlit as st
+import seaborn as sns
+import plotly.express as px
+from datetime import datetime, timedelta
 import gspread
 from google.oauth2.service_account import Credentials
-import io
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
 
+# Set up paths
+csv_file_path = r"C:\Users\Muthuraja\OneDrive\Attachments\Desktop\second\context.csv"  # Path to your CSV file
+output_csv_path = r"C:\Users\Muthuraja\OneDrive\Attachments\Desktop\second\contents.csv"  # Path to save query results
 
+# Google Sheets setup
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 CREDS_PATH = r"C:\Users\Muthuraja\Downloads\modern-cycling-444916-g6-82c207d3eb47.json"  # Provide your Google credentials path
 
-
-chat_model = GPT2LMHeadModel.from_pretrained('gpt2')
-chat_tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
-
-# Initialize Sentiment Analysis Pipeline using Hugging Face
-sentiment_model = pipeline('sentiment-analysis')
-
-# Initialize SentenceTransformer model for semantic search
-sentence_model = SentenceTransformer('paraphrase-MiniLM-L6-v2')
-
-# Function to initialize Google Sheets connection
+# Initialize Google Sheets connection
 def initialize_google_sheets():
     credentials = Credentials.from_service_account_file(CREDS_PATH, scopes=SCOPE)
     try:
         client = gspread.authorize(credentials)
-        sheet = client.open("SalesStores").sheet1  # Change Google Sheet name to "SalesStores"
+        sheet = client.open("infosys").sheet1  # Change Google Sheet name to "SalesStores"
         return sheet
     except gspread.exceptions.APIError as e:
         st.error(f"Google Sheets API error: {e}")
@@ -38,201 +35,286 @@ def initialize_google_sheets():
 
 sheet = initialize_google_sheets()
 
-# Function to extract text from PDF using PyPDF2
-def extract_pdf_text_with_pypdf(pdf_file):
-    pdf_text = ""
-    with io.BytesIO(pdf_file.read()) as pdf_data:
-        pdf_reader = PyPDF2.PdfReader(pdf_data)
-        for page_num in range(len(pdf_reader.pages)):
-            page = pdf_reader.pages[page_num]
-            pdf_text += page.extract_text()
-    return pdf_text.strip()
+# Function to safely load the CSV dataset
+def load_csv_safely(file_path):
+    try:
+        df = pd.read_csv(file_path, on_bad_lines='skip')  # Skips malformed lines
+        required_columns = ['question', 'product', 'price', 'features', 'ratings', 'discount']
+        for column in required_columns:
+            if column not in df.columns:
+                raise Exception(f"CSV does not contain the required column: '{column}'. Please check your CSV.")
+        
+        if 'Timestamp' not in df.columns:
+            df['Timestamp'] = pd.NaT  # Set it to NaT (Not a Time) initially
+        
+        return df
+    except pd.errors.ParserError as e:
+        st.error(f"Error reading CSV file: {e}")
+        return None
+    except Exception as e:
+        st.error(f"An error occurred: {e}")
+        return None
 
-# Function to analyze sentiment using Hugging Face's pre-trained model
-def analyze_sentiment(text):
-    sentiment = sentiment_model(text)[0]  # Output is a list of dictionaries
-    label = sentiment['label']
-    score = sentiment['score']
-    
-    # Define sentiment labels
-    if label == "POSITIVE" and score > 0.6:
-        sentiment_description = "Positive"
-    elif label == "NEGATIVE" and score > 0.6:
-        sentiment_description = "Negative"
-    else:
-        sentiment_description = "Neutral"
-    
-    return score, sentiment_description
+dataset = load_csv_safely(csv_file_path)  # Load the dataset safely
+embedding_model = SentenceTransformer('all-MiniLM-L6-v2')  # Pre-trained sentence transformer model
 
-# Function to extract relevant chunks of text based on the question using Sentence Transformers
-def extract_relevant_chunks(question, pdf_text, top_n=3):
-    pdf_chunks = pdf_text.split('\n')  # Split the PDF text into chunks (each chunk is a line)
-
-    # Encode the question and document chunks using Sentence Transformers
-    question_embedding = sentence_model.encode([question])  # Get the embedding (vector) for the user's question
-    chunk_embeddings = sentence_model.encode(pdf_chunks)  # Get embeddings (vectors) for each chunk of the PDF
+# Function to filter data by date
+def filter_data_by_date(data, date_filter):
+    data['Timestamp'] = pd.to_datetime(data['Timestamp'], errors='coerce')
+    if date_filter == "Today":
+        start_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        data = data[data['Timestamp'] >= start_date]
+    elif date_filter == "One Week":
+        start_date = datetime.now() - timedelta(weeks=1)
+        data = data[data['Timestamp'] >= start_date]
     
-    # Compute cosine similarities between the question and each chunk of text
-    similarities = np.dot(chunk_embeddings, question_embedding.T).flatten()
-    
-    # Get the top N relevant chunks based on similarity scores
-    relevant_indices = similarities.argsort()[-top_n:][::-1]
-    relevant_chunks = [pdf_chunks[i] for i in relevant_indices]
-    
-    return relevant_chunks
+    return data
 
-# Function to generate relevant answers using GPT-2 based on the context chunks
-def generate_relevant_answer(user_input, relevant_chunks):
-    context = " ".join(relevant_chunks)  # Combine the relevant chunks into one long string (context)
-    input_text = user_input + " " + context  # Combine the user input (question) with the context
-    
-    input_ids = chat_tokenizer.encode(input_text, return_tensors='pt')  # Tokenize the input text for GPT-2
-
-    # Generate the answer using GPT-2 with num_return_sequences set to 1
-    chat_output = chat_model.generate(
-        input_ids, 
-        max_new_tokens=150, 
-        temperature=0.9, 
-        num_return_sequences=1,  # Ensure only one answer is generated
-        no_repeat_ngram_size=2
-    )
-    
-    answer = chat_tokenizer.decode(chat_output[0], skip_special_tokens=True)  # Decode the output from GPT-2
-    return answer
-
-# Function to update Google Sheets with sentiment, product, and relevant answer only (no timestamp, query or response)
-def update_sheet(sentiment_score, sentiment_description, relevant_answer, product_name):
-    # Add a timestamp to each entry
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    sheet.append_row([timestamp, sentiment_description, sentiment_score, relevant_answer, product_name])
-
-# Function to convert speech to text using microphone input
+# Function to recognize speech using SpeechRecognition and PyAudio in chunks
 def listen_to_speech():
     recognizer = sr.Recognizer()
     with sr.Microphone() as source:
         recognizer.adjust_for_ambient_noise(source)
         st.write("Listening...")
-        audio = recognizer.listen(source)
-    try:
-        text = recognizer.recognize_google(audio)
-        return text
-    except sr.UnknownValueError:
-        return None
+        
+        try:
+            audio = recognizer.listen(source, timeout=5, phrase_time_limit=10)
+            st.write("Recognizing...")
+            text = recognizer.recognize_google(audio)
+            st.write(f"Recognized: {text}")
+            return text
+        except sr.UnknownValueError:
+            st.error("Sorry, I could not understand the audio.")
+            return None
+        except sr.RequestError:
+            st.error("Could not request results from Google Speech Recognition service.")
+            return None
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
+            return None
 
-# Function to filter data by date range
-def filter_data_by_date(data, date_filter):
-    if date_filter == 'Today':
-        today = datetime.today()
-        start_date = today.replace(hour=0, minute=0, second=0, microsecond=0)
-        data = data[data['Timestamp'] >= start_date]
-    elif date_filter == 'One Week':
-        one_week_ago = datetime.today() - timedelta(weeks=1)
-        data = data[data['Timestamp'] >= one_week_ago]
-    return data
+# Function to check if the text is a greeting
+def is_greeting(text):
+    greetings = ["hello", "hi", "hey", "good morning", "good afternoon", "good evening", "hola"]
+    return any(greeting in text.lower() for greeting in greetings)
 
-# Dashboard functions
+# Function to respond to greetings
+def respond_to_greeting():
+    st.write("Hi there! How can I assist you today? 😊")
+
+# Function to extract the product name from the query
+def extract_product_name(query):
+    for product in dataset['product'].fillna('Unknown').astype(str):
+        if product.lower() in query.lower():
+            return product
+    return None
+
+# Function to find the best matching answer using embeddings
+def find_answer(query):
+    if dataset is None:
+        return "Dataset not loaded properly."
+    
+    query_embedding = embedding_model.encode([query])
+    dataset_embeddings = embedding_model.encode(dataset['question'].tolist())
+    
+    similarities = cosine_similarity(query_embedding, dataset_embeddings)
+    closest_idx = np.argmax(similarities)
+    
+    closest_question = dataset.iloc[closest_idx]
+    product_name = closest_question['product']
+    price = closest_question['price']
+    features = closest_question['features']
+    ratings = closest_question['ratings']
+    discount = closest_question['discount']
+
+    if 'Timestamp' not in closest_question.index:
+        closest_question['Timestamp'] = datetime.now()
+
+    save_query_to_csv(query, product_name, price, features, ratings, discount)
+
+    if "price" in query.lower():
+        return f"The price of {product_name} is {price}"
+    elif "features" in query.lower():
+        return f"Features of {product_name}: {features}"
+    elif "discount" in query.lower():
+        return f"The discount on {product_name} is {discount}%"
+    else:
+        return f"Product: {product_name}\nPrice: {price}\nFeatures: {features}\nRatings: {ratings}\nDiscount: {discount}%"
+
+# Function to save the query and answer to 'context.csv'
+def save_query_to_csv(query, product_name, price, features, ratings, discount):
+    new_entry = {
+        'question': query,
+        'product': product_name,
+        'price': price,
+        'features': features,
+        'ratings': ratings,
+        'discount': discount,
+        'Timestamp': datetime.now()
+    }
+    new_entry_df = pd.DataFrame([new_entry])
+    new_entry_df.to_csv(output_csv_path, mode='a', header=not os.path.exists(output_csv_path), index=False)
+
+# Function for sentiment analysis using TextBlob with emojis
+def analyze_sentiment_with_emoji(text):
+    blob = TextBlob(text)
+    sentiment_score = blob.sentiment.polarity
+    if sentiment_score > 0:
+        sentiment = "Positive"
+        emoji = "😊"
+    elif sentiment_score < 0:
+        sentiment = "Negative"
+        emoji = "😞"
+    else:
+        sentiment = "Neutral"
+        emoji = "😐"
+    return sentiment, sentiment_score, emoji
+
+# Function to provide product recommendations based on the query
+def recommend_products(query):
+    if dataset is None:
+        return "Dataset not loaded properly."
+
+    dataset['product'] = dataset['product'].fillna('Unknown').astype(str)
+    query_embedding = embedding_model.encode([query])
+    dataset_embeddings = embedding_model.encode(dataset['product'].tolist())
+    similarities = cosine_similarity(query_embedding, dataset_embeddings)
+    top_indices = np.argsort(similarities[0])[-3:][::-1]
+    
+    recommendations = []
+    for idx in top_indices:
+        product = dataset.iloc[idx]
+        recommendations.append({
+            'product': product['product'],
+            'price': product['price'],
+            'features': product['features'],
+            'ratings': product['ratings'],
+            'discount': product['discount']
+        })
+    
+    while len(recommendations) < 3:
+        recommendations.append({
+            'product': 'No recommendation available',
+            'price': 'N/A',
+            'features': 'N/A',
+            'ratings': 'N/A',
+            'discount': 'N/A'
+        })
+    
+    return recommendations
+
+# Function to handle the entire continuous interaction loop
+def continuous_interaction():
+    st.title("Speech Recognition with Product Queries")
+    if st.button("Start Speech Recognition"):
+        while True:
+            user_input = listen_to_speech()
+            if user_input:
+                if is_greeting(user_input):
+                    respond_to_greeting()
+                    continue
+                product_name = extract_product_name(user_input)
+                if product_name:
+                    st.write(f"Let me check the details for {product_name}:")
+                    product_details = dataset[dataset['product'].str.lower() == product_name.lower()]
+                    if not product_details.empty:
+                        product_info = product_details.iloc[0]
+                        st.write(f"Product: {product_info['product']}")
+                        st.write(f"Price: {product_info['price']}")
+                        st.write(f"Features: {product_info['features']}")
+                        st.write(f"Ratings: {product_info['ratings']}")
+                        st.write(f"Discount: {product_info['discount']}%")
+                    else:
+                        st.write("Sorry, I couldn't find the product you're asking for.")
+                else:
+                    answer = find_answer(user_input)
+                    st.write(f"Answer: {answer}")
+
+                sentiment, sentiment_score, emoji = analyze_sentiment_with_emoji(user_input)
+                st.write(f"Sentiment: {sentiment} (Score: {sentiment_score}) {emoji}")
+
+                st.write("Here are some product recommendations based on your query: ")
+                recommendations = recommend_products(user_input)
+                for idx, rec in enumerate(recommendations, 1):
+                    st.write(f"Recommendation {idx}:")
+                    st.write(f"Product: {rec['product']}")
+                    st.write(f"Price: {rec['price']}")
+                    st.write(f"Features: {rec['features']}")
+                    st.write(f"Ratings: {rec['ratings']}")
+                    st.write(f"Discount: {rec['discount']}%")
+                    st.write("---")
+
+# Dashboard function with time filtering
 def display_dashboard():
-    # Fetch data from Google Sheets
-    if sheet:
-        data = pd.DataFrame(sheet.get_all_records())
+    st.title("Product Dashboard")
+    st.write("Welcome to the product query dashboard!")
+    
+    time_filter = st.sidebar.selectbox(
+        "Select time period", 
+        ["All Time", "Today", "One Week"]
+    )
+    
+    query_results_df = pd.read_csv(output_csv_path, on_bad_lines='skip')
+    
+    if 'Timestamp' not in query_results_df.columns:
+        query_results_df['Timestamp'] = pd.to_datetime('now')
+    
+    query_results_df = filter_data_by_date(query_results_df, time_filter)
+    
+    st.subheader(f"Recent Queries Summary ({time_filter})")
+    st.write(query_results_df.tail(10))
+    
+    sentiment_counts = query_results_df['question'].apply(lambda x: analyze_sentiment_with_emoji(x)[0]).value_counts()
+    st.subheader(f"Sentiment Analysis Distribution ({time_filter})")
+    st.write(sentiment_counts)
+    
+    sentiment_fig = px.pie(
+        sentiment_counts, 
+        names=sentiment_counts.index, 
+        values=sentiment_counts.values, 
+        title=f"Sentiment Distribution of Queries ({time_filter})"
+    )
+    st.plotly_chart(sentiment_fig)
 
-        # Ensure the Timestamp column exists and is in datetime format
-        if 'Timestamp' in data.columns:
-            data['Timestamp'] = pd.to_datetime(data['Timestamp'])
+    query_results_df['sentiment_score'] = query_results_df['question'].apply(lambda x: analyze_sentiment_with_emoji(x)[1])
+    
+    sentiment_time_fig = px.line(
+        query_results_df, 
+        x='Timestamp', 
+        y='sentiment_score', 
+        title=f"Sentiment Score Over Time ({time_filter})"
+    )
+    st.plotly_chart(sentiment_time_fig)
+    
+    product_counts = query_results_df['product'].value_counts()
+    st.subheader(f"Product Popularity ({time_filter})")
+    st.write(product_counts)
 
-            # Add a date filter to the dashboard
-            date_filter = st.selectbox("Filter by Date", ["All Time", "Today", "One Week"])
+    product_popularity_fig = px.pie(
+        product_counts, 
+        names=product_counts.index, 
+        values=product_counts.values, 
+        title=f"Product Popularity ({time_filter})"
+    )
+    st.plotly_chart(product_popularity_fig)
 
-            # Filter data based on the selected date range
-            if date_filter != "All Time":
-                data = filter_data_by_date(data, date_filter)
+    recommended_products = query_results_df['product'].value_counts()
+    st.subheader(f"Most Recommended Products ({time_filter})")
+    st.write(recommended_products)
 
-            # Check if the required columns are present
-            if 'Sentiment' in data.columns and 'Answer' in data.columns:
-                # Filter by product (Amazon or Flipkart)
-                product_filter = st.selectbox("Select Product", ["All", "Amazon", "Flipkart"])
+    recommended_products_fig = px.bar(
+        recommended_products, 
+        x=recommended_products.index, 
+        y=recommended_products.values, 
+        title=f"Top Recommended Products ({time_filter})"
+    )
+    st.plotly_chart(recommended_products_fig)
 
-                if product_filter != "All":
-                    data = data[data['Product Name'] == product_filter]
-
-                # Plot sentiment distribution
-                sentiment_counts = data['Sentiment'].value_counts()
-
-                # Plot Sentiment Distribution
-                st.subheader("Sentiment Distribution")
-                fig, ax = plt.subplots()
-                sentiment_counts.plot(kind='bar', ax=ax)
-                ax.set_ylabel("Frequency")
-                ax.set_xlabel("Sentiment")
-                st.pyplot(fig)
-
-                # Call Statistics
-                total_calls = len(data)
-                avg_sentiment = data['Sentiment'].apply(lambda x: 1 if x == 'Positive' else -1 if x == 'Negative' else 0).mean()
-                avg_sentiment = round(avg_sentiment, 2)
-
-                st.subheader("Call Activity Statistics")
-                st.write(f"Total Calls: {total_calls}")
-                st.write(f"Average Sentiment: {avg_sentiment}")
-
-                # Call History Table (now no timestamps or queries)
-                st.subheader("Call History")
-                st.write(data[['Sentiment', 'Answer', 'Product Name']])
-
-                # Download option for the entire history (CSV)
-                csv = data.to_csv(index=False)
-                st.download_button(
-                    label="Download Call History",
-                    data=csv,
-                    file_name="call_history.csv",
-                    mime="text/csv"
-                )
-
-            else:
-                st.error("The required columns (Sentiment, Answer) are not found in the data.")
-                st.write("Check the data structure in the Google Sheet to make sure the columns are correct.")
-
-# Main Streamlit UI and workflow
-def main():
-    st.title('Real-Time Customer Query Analysis & Call History')
-
-    # Sidebar Navigation
-    sidebar_option = st.sidebar.selectbox("Select an Option", ["Dashboard", "Call Analysis"])
-
-    if sidebar_option == "Dashboard":
+# Main code to run the app
+if __name__ == '__main__':
+    mode = st.sidebar.radio("Select Mode", ("Speech Recognition", "Dashboard"))
+    
+    if mode == "Speech Recognition":
+        continuous_interaction()
+    elif mode == "Dashboard":
         display_dashboard()
-
-    elif sidebar_option == "Call Analysis":
-        # Upload PDF file
-        uploaded_pdf = st.file_uploader("Upload a PDF file", type="pdf")
-        if uploaded_pdf:
-            pdf_text = extract_pdf_text_with_pypdf(uploaded_pdf)
-
-            # Speech recognition button
-            if st.button("Start Speech Recognition"):
-                user_input = listen_to_speech()
-                if user_input:
-                    # Perform sentiment analysis using the new Hugging Face model
-                    sentiment_score, sentiment_description = analyze_sentiment(user_input)
-
-                    # Extract relevant chunks based on the question and PDF content
-                    relevant_chunks = extract_relevant_chunks(user_input, pdf_text)
-
-                    # Generate a relevant answer using GPT-2 based on the extracted context
-                    relevant_answer = generate_relevant_answer(user_input, relevant_chunks)
-
-              
-                    st.write(f"Detected Sentiment: {sentiment_description} (Score: {sentiment_score:.2f})")
-                    st.write(f"Answer: {relevant_answer[:150]}...")  # Limiting answer length to 150 characters
-
-                    # Allow the user to select the product (Amazon or Flipkart)
-                    product_name = st.selectbox("Select Product", ["Amazon", "Flipkart"])
-
-                    # Store the query and the response in Google Sheets
-                    if sheet:
-                        update_sheet(sentiment_score, sentiment_description, relevant_answer, product_name)
-
-                    st.write("Query and answer saved in Call History!")
-
-if __name__ == "__main__":
-    main()
