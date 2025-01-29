@@ -1,4 +1,4 @@
-import os
+import os   
 import pyaudio
 import pandas as pd
 from sentence_transformers import SentenceTransformer
@@ -14,38 +14,38 @@ from datetime import datetime, timedelta
 import gspread
 from google.oauth2.service_account import Credentials
 
-# Set up paths
-csv_file_path = r"C:\Users\Muthuraja\OneDrive\Attachments\Desktop\second\context.csv"  # Path to your CSV file
+# Set up paths for CSV files and Google Sheets credentials
+csv_file_path = r"C:\Users\Muthuraja\OneDrive\Attachments\Desktop\second\context.csv"  # Path to CSV file with product info
 output_csv_path = r"C:\Users\Muthuraja\OneDrive\Attachments\Desktop\second\contents.csv"  # Path to save query results
 
 # Google Sheets setup
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-CREDS_PATH = r"C:\Users\Muthuraja\Downloads\modern-cycling-444916-g6-82c207d3eb47.json"  # Provide your Google credentials path
+CREDS_PATH = r"C:\Users\Muthuraja\Downloads\modern-cycling-444916-g6-82c207d3eb47.json"  # Google credentials path
 
 # Initialize Google Sheets connection
 def initialize_google_sheets():
     credentials = Credentials.from_service_account_file(CREDS_PATH, scopes=SCOPE)
     try:
         client = gspread.authorize(credentials)
-        sheet = client.open("infosys").sheet1  # Change Google Sheet name to "SalesStores"
+        sheet = client.open("infosys").sheet1  # Accessing the Google Sheet "SalesStores"
         return sheet
     except gspread.exceptions.APIError as e:
         st.error(f"Google Sheets API error: {e}")
         return None
 
-sheet = initialize_google_sheets()
+sheet = initialize_google_sheets()  # Initialize Google Sheets connection
 
 # Function to safely load the CSV dataset
 def load_csv_safely(file_path):
     try:
-        df = pd.read_csv(file_path, on_bad_lines='skip')  # Skips malformed lines
+        df = pd.read_csv(file_path, on_bad_lines='skip')  # Handles malformed lines in CSV
         required_columns = ['question', 'product', 'price', 'features', 'ratings', 'discount']
         for column in required_columns:
             if column not in df.columns:
                 raise Exception(f"CSV does not contain the required column: '{column}'. Please check your CSV.")
         
         if 'Timestamp' not in df.columns:
-            df['Timestamp'] = pd.NaT  # Set it to NaT (Not a Time) initially
+            df['Timestamp'] = pd.NaT  # Initialize Timestamp column if it doesn't exist
         
         return df
     except pd.errors.ParserError as e:
@@ -55,8 +55,9 @@ def load_csv_safely(file_path):
         st.error(f"An error occurred: {e}")
         return None
 
-dataset = load_csv_safely(csv_file_path)  # Load the dataset safely
-embedding_model = SentenceTransformer('all-MiniLM-L6-v2')  # Pre-trained sentence transformer model
+dataset = load_csv_safely(csv_file_path)  # Load dataset safely
+
+embedding_model = SentenceTransformer('all-MiniLM-L6-v2')  # Pre-trained sentence transformer model for embeddings
 
 # Function to filter data by date
 def filter_data_by_date(data, date_filter):
@@ -70,13 +71,13 @@ def filter_data_by_date(data, date_filter):
     
     return data
 
-# Function to recognize speech using SpeechRecognition and PyAudio in chunks
+# Function for speech recognition
 def listen_to_speech():
     recognizer = sr.Recognizer()
     with sr.Microphone() as source:
         recognizer.adjust_for_ambient_noise(source)
         st.write("Listening...")
-        
+
         try:
             audio = recognizer.listen(source, timeout=5, phrase_time_limit=10)
             st.write("Recognizing...")
@@ -109,17 +110,32 @@ def extract_product_name(query):
             return product
     return None
 
-# Function to find the best matching answer using embeddings
+# Function to search for relevant product details based on query (not relying on product name explicitly)
 def find_answer(query):
     if dataset is None:
         return "Dataset not loaded properly."
     
+    # Create embeddings for the query and all possible columns (product, features, question)
     query_embedding = embedding_model.encode([query])
-    dataset_embeddings = embedding_model.encode(dataset['question'].tolist())
     
-    similarities = cosine_similarity(query_embedding, dataset_embeddings)
-    closest_idx = np.argmax(similarities)
+    # Generate embeddings for all questions, products, and features to find relevance
+    combined_columns = dataset['question'].fillna('') + " " + dataset['product'].fillna('') + " " + dataset['features'].fillna('')
+    combined_embeddings = embedding_model.encode(combined_columns.tolist())
     
+    # Calculate cosine similarity between the query embedding and each product's combined embeddings
+    similarities = cosine_similarity(query_embedding, combined_embeddings)
+    
+    # Set a threshold for similarity to determine if the query matches any product
+    similarity_threshold = 0.5  # You can adjust this threshold based on how strict you want the match
+    
+    closest_idx = np.argmax(similarities)  # Index of the closest match
+    highest_similarity = similarities[0][closest_idx]  # Highest similarity score
+    
+    # If no match is found above the threshold, return "No matching product found"
+    if highest_similarity < similarity_threshold:
+        return "Sorry, no product found for your query."
+    
+    # Get the details for the closest match
     closest_question = dataset.iloc[closest_idx]
     product_name = closest_question['product']
     price = closest_question['price']
@@ -155,7 +171,7 @@ def save_query_to_csv(query, product_name, price, features, ratings, discount):
     new_entry_df = pd.DataFrame([new_entry])
     new_entry_df.to_csv(output_csv_path, mode='a', header=not os.path.exists(output_csv_path), index=False)
 
-# Function for sentiment analysis using TextBlob with emojis
+# Function for sentiment analysis with emojis
 def analyze_sentiment_with_emoji(text):
     blob = TextBlob(text)
     sentiment_score = blob.sentiment.polarity
@@ -203,7 +219,7 @@ def recommend_products(query):
     
     return recommendations
 
-# Function to handle the entire continuous interaction loop
+# Function to handle continuous interaction loop
 def continuous_interaction():
     st.title("Speech Recognition with Product Queries")
     if st.button("Start Speech Recognition"):
@@ -244,7 +260,7 @@ def continuous_interaction():
                     st.write(f"Discount: {rec['discount']}%")
                     st.write("---")
 
-# Dashboard function with time filtering
+# Dashboard for visualizations
 def display_dashboard():
     st.title("Product Dashboard")
     st.write("Welcome to the product query dashboard!")
