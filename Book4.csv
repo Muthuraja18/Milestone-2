@@ -1,0 +1,5 @@
+question,product,price,features,ratings,discount,Timestamp,customer_id
+can you tell me my mobile phones,"""Smartphone X""",$499,"""5G, 128GB storage""",4.5,15,2025-02-06 22:22:38.949071,123
+can you latest laptop show me,Lenovo,46000,max power higher quality 512GB,4.4,27%,2025-02-06 22:24:02.903898,123
+can you tell me laptop,Lenovo,46000,max power higher quality 512GB,4.4,27%,2025-02-06 23:47:21.874588,7462
+some other laptop,Lenovo,46000,max power higher quality 512GB,4.4,27%,2025-02-06 23:47:42.140497,3719
