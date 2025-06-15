@@ -16,8 +16,8 @@ import tempfile
 GROQ_API_KEY = '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'
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-csv_file_path = r"E:\second\context.csv"
-output_csv_path = r"E:\second\contents (2).csv"
+csv_file_path = "context.csv"
+output_csv_path = "contents (2).csv"
 
 # === Load CSV ===
 def load_csv_safely(file_path):
