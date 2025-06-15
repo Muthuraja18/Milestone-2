@@ -11,8 +11,6 @@ import streamlit as st
 import seaborn as sns
 import plotly.express as px
 from datetime import datetime, timedelta
-import gspread
-from google.oauth2.service_account import Credentials
 
 GROQ_API_KEY = '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'
 GROQ_API_URL ="https://api.groq.com/openai/v1/chat/completions"
@@ -20,21 +18,6 @@ GROQ_API_URL ="https://api.groq.com/openai/v1/chat/completions"
 csv_file_path = r"E:\second\context.csv"
 output_csv_path = r"E:\second\contents (2).csv"
 
-SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-CREDS_PATH = r"C:\Users\Muthuraja\Downloads\modern-cycling-444916-g6-82c207d3eb47.json"
-
-# Initialize Google Sheets connection
-def initialize_google_sheets():
-    credentials = Credentials.from_service_account_file(CREDS_PATH, scopes=SCOPE)
-    try:
-        client = gspread.authorize(credentials)
-        sheet = client.open("infosys").sheet1
-        return sheet
-    except gspread.exceptions.APIError as e:
-        st.error(f"Google Sheets API error: {e}")
-        return None
-
-sheet = initialize_google_sheets()
 
 # Function to safely load the CSV dataset
 def load_csv_safely(file_path):
