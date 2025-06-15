@@ -5,6 +5,7 @@ import requests
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 import time
+import pyaudio
 import speech_recognition as sr
 from textblob import TextBlob
 import streamlit as st
