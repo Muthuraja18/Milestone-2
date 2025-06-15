@@ -1,13 +1,13 @@
 streamlit
 pandas
+numpy
+requests
 sentence-transformers
 scikit-learn
-numpy
-SpeechRecognition
+speechrecognition
 textblob
 seaborn
 plotly
-requests
 gspread
 google-auth
-
+pyaudio
