@@ -16,13 +16,13 @@ import tempfile
 GROQ_API_KEY = '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'
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-csv_file_path = r"E:\second\context.csv"
-output_csv_path = r"E:\second\contents (2).csv"
+csv_file_path = st.sidebar.file_uploader("Upload Dataset CSV", type="csv")
+output_csv_path = "output_queries.csv"
 
 # === Load CSV ===
-def load_csv_safely(file_path):
+def load_csv_safely(uploaded_file):
     try:
-        df = pd.read_csv(file_path, encoding='latin1', on_bad_lines='skip')
+        df = pd.read_csv(uploaded_file, encoding='latin1', on_bad_lines='skip')
         required_columns = ['question', 'product', 'price', 'features', 'ratings', 'discount']
         for column in required_columns:
             if column not in df.columns:
@@ -34,8 +34,13 @@ def load_csv_safely(file_path):
         st.error(f"Error loading CSV: {e}")
         return None
 
-dataset = load_csv_safely(csv_file_path)
-embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+if csv_file_path is not None:
+    dataset = load_csv_safely(csv_file_path)
+else:
+    st.warning("Please upload the product context CSV file to continue.")
+    st.stop()
+
+embedding_model = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
 
 def filter_data_by_date(data, date_filter):
     data['Timestamp'] = pd.to_datetime(data['Timestamp'], errors='coerce')
