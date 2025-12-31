@@ -15,21 +15,30 @@ from datetime import datetime, timedelta
 import gspread
 from google.oauth2.service_account import Credentials
 
-GROQ_API_KEY = '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'
+# Groq API setup
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+if not GROQ_API_KEY:
+    raise ValueError("GROQ_API_KEY not found in environment variables")
+
+client = Groq(api_key=GROQ_API_KEY)
 GROQ_API_URL ="https://api.groq.com/openai/v1/chat/completions"
 
-csv_file_path = r"E:\second\context.csv"
+
+# Set up paths for CSV files and Google Sheets credentials
+csv_file_path = r"context.csv"
 output_csv_path = r"E:\second\contents (2).csv"
 
+# Google Sheets setup
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-CREDS_PATH = r"C:\Users\Muthuraja\Downloads\modern-cycling-444916-g6-82c207d3eb47.json"
+CREDS_PATH = r"E:\second\modern-cycling-444916-g6-82c207d3eb47.json"
 
 # Initialize Google Sheets connection
 def initialize_google_sheets():
     credentials = Credentials.from_service_account_file(CREDS_PATH, scopes=SCOPE)
     try:
         client = gspread.authorize(credentials)
-        sheet = client.open("infosys").sheet1
+        sheet = client.open("Sales").sheet1
         return sheet
     except gspread.exceptions.APIError as e:
         st.error(f"Google Sheets API error: {e}")
@@ -81,7 +90,7 @@ def get_groq_response(query):
     }
 
     payload = {
-    "model": "llama3-8b-8192",  # Update to the correct model ID used by Groq
+    "model": "openai/gpt-oss-20b",  # Update to the correct model ID used by Groq
     "messages": [{"role": "user", "content": query}]
 }
 
@@ -100,27 +109,51 @@ def get_groq_response(query):
         return "Error in API request."
 
 # Function for speech recognition
+# Function for speech recognition with automatic device detection
 def listen_to_speech():
     recognizer = sr.Recognizer()
-    with sr.Microphone() as source:
-        recognizer.adjust_for_ambient_noise(source)
-        st.write("Listening...")
 
-        try:
-            audio = recognizer.listen(source, timeout=5, phrase_time_limit=10)
-            st.write("Recognizing...")
-            text = recognizer.recognize_google(audio)
-            st.write(f"Recognized: {text}")
-            return text
-        except sr.UnknownValueError:
-            st.error("Sorry, I could not understand the audio.")
+    # Check available microphone devices
+    try:
+        audio = pyaudio.PyAudio()
+        input_devices = []
+        for i in range(audio.get_device_count()):
+            device_info = audio.get_device_info_by_index(i)
+            if device_info['maxInputChannels'] > 0:
+                input_devices.append((i, device_info['name']))
+        
+        if not input_devices:
+            st.error("❌ No input devices found. Please connect a microphone.")
             return None
-        except sr.RequestError:
-            st.error("Could not request results from Google Speech Recognition service.")
-            return None
-        except Exception as e:
-            st.error(f"An error occurred: {e}")
-            return None
+
+        default_device_index = input_devices[0][0]
+        device_name = input_devices[0][1]
+        st.info(f"🎙 Using microphone: {device_name}")
+
+        with sr.Microphone(device_index=default_device_index) as source:
+            recognizer.adjust_for_ambient_noise(source)
+            st.write("Listening... 🎧")
+
+            try:
+                audio_data = recognizer.listen(source, timeout=5, phrase_time_limit=10)
+                st.write("Recognizing... 🧠")
+                text = recognizer.recognize_google(audio_data)
+                st.success(f"Recognized: {text}")
+                return text
+            except sr.UnknownValueError:
+                st.warning("Sorry, I could not understand the audio.")
+                return None
+            except sr.RequestError:
+                st.error("Could not request results from Google Speech Recognition service.")
+                return None
+            except Exception as e:
+                st.error(f"An unexpected error occurred: {e}")
+                return None
+
+    except Exception as e:
+        st.error(f"Microphone access failed: {e}")
+        return None
+
 
 # Function to check if the text is a greeting
 def is_greeting(text):
