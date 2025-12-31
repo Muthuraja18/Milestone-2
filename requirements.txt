@@ -1,5 +1,6 @@
 streamlit
 pandas
+pyaudio
 numpy
 requests
 sentence-transformers
@@ -13,4 +14,5 @@ sounddevice
 scipy
 SpeechRecognition
 datetime
+
 
