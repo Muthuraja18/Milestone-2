@@ -7,7 +7,10 @@ scikit-learn
 textblob
 seaborn
 plotly
+gunicorn
+openpyxl
 sounddevice
 scipy
 SpeechRecognition
 datetime
+
